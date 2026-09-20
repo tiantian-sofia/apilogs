@@ -45,14 +45,18 @@ After that, command `py.test` shall be available.
 
 Tests are placed in `tests` subdirectory or subdirectories.
 
+To run all tests without `tox`, using your current python environment::
+
+    $ python -m pytest tests
+
 To run all tests in `tests` subdirectory, be a bit verbose and print possible
 output printed to stdout by your testing code::
 
     $ py.test -sv tests
 
-To run all tests defined in `tests/test_it.py`::
+To run all tests defined in `tests/test_core.py`::
 
-    $ py.test -sv tests/test_it.py
+    $ py.test -sv tests/test_core.py
 
 pytest_ allows running most tests written for `unittest`, `nose` and other testing frameworks.
 
@@ -213,7 +217,7 @@ First, create and activate virtualenv for your target python version (as describ
 
 Then run the test of your interest::
 
-    $ py.test -sv tests/test_it.py
+    $ py.test -sv tests/test_core.py
 
 For more methods of selecting tests see: `Specifying tests / selecting tests`_
 
@@ -224,9 +228,9 @@ Check test coverage
 
 First, create and activate virtualenv for your target python version (as described above).
 
-To test coverage of complete package `awslogs`::
+To test coverage of complete package `apilogs`::
 
-    $ coverage run --source awslogs -m pytest tests/
+    $ coverage run --source apilogs -m pytest tests/
 
 This creates or updates a file `.coverage`.
 
@@ -235,10 +239,10 @@ To show coverage report on console::
     $ coverage report
     Name                    Stmts   Miss  Cover
     -------------------------------------------
-    awslogs/__init__.py         2      0   100%
-    awslogs/bin.py             85      9    89%
-    awslogs/core.py           143     12    92%
-    awslogs/exceptions.py      12      2    83%
+    apilogs/__init__.py         2      0   100%
+    apilogs/bin.py             85      9    89%
+    apilogs/core.py           143     12    92%
+    apilogs/exceptions.py      12      2    83%
     -------------------------------------------
     TOTAL                     242     23    90%
 
