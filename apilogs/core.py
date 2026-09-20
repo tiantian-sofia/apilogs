@@ -57,6 +57,7 @@ class AWSLogs(object):
         self.start = self.parse_datetime(kwargs.get('start'))
         self.end = self.parse_datetime(kwargs.get('end'))
         self.next_tokens = {}
+        self._lambda_groups = None
 
         self.client = boto3.client(
             'logs',
@@ -110,6 +111,30 @@ class AWSLogs(object):
                         names.append(name)
         return names
 
+    def _get_lambda_log_groups(self):
+        """Return the distinct Lambda log groups backing this API.
+
+        The function-to-integration mapping only changes on deployments, so
+        it is resolved once per session to avoid issuing a get_resources plus
+        one get_integration per method on every watch poll. A failure is
+        logged and retried on the next call instead of killing the generator.
+        """
+        if self._lambda_groups is None:
+            try:
+                groups = []
+                for name in self.get_lambda_function_names(self.api_id,
+                                                           self.stage):
+                    group = ("/aws/lambda/" + name).split(':')[0]
+                    if group not in groups:
+                        groups.append(group)
+            except Exception as e:
+                log.warning(
+                    "Unable to resolve Lambda functions for API {0}: {1}"
+                    .format(self.api_id, e))
+                return []
+            self._lambda_groups = groups
+        return self._lambda_groups
+
     def list_logs(self):
         streams = []
 
@@ -130,92 +155,44 @@ class AWSLogs(object):
 
         queue, exit = Queue(), Event()
 
-        def update_next_token(response, kwargs):
-            group = kwargs['logGroupName']
+        def fetch_group(group, base_kwargs, allevents):
+            # Each group gets a fresh request dict. A single shared kwargs
+            # dict used to be mutated in turn with each group's name and
+            # token, so callers leaked state into each other.
+            request = dict(base_kwargs)
+            request['logGroupName'] = group
+            if group in self.next_tokens:
+                request['nextToken'] = self.next_tokens[group]
 
-            if 'nextToken' in response:
-                next = response['nextToken']
-
-                self.next_tokens[group] = next
-
-                #print "Updated tokens"
-                #print self.next_tokens
-            else:
-                if group in self.next_tokens:
-                    del self.next_tokens[group]
-
-                if self.watch:
-                    time.sleep(0.2)
-
-        ## todo: remove shared kwargs
-        def list_lambda_logs(allevents, kwargs):
-            # add events from lambda function streams
-            fxns = self.get_lambda_function_names(self.api_id, self.stage)
-            for fxn in fxns:
-                lambda_group = ("/aws/lambda/" + fxn).split(':')[0]
-                kwargs['logGroupName'] = lambda_group
-
-                if lambda_group in self.next_tokens:
-                    kwargs['nextToken'] = self.next_tokens[lambda_group]
+            try:
+                response = self.client.filter_log_events(**request)
+            except Exception as e:
+                # Never leave a stale token behind for a failed page: it
+                # would keep non-watch mode looping forever and force watch
+                # to refetch this page on every single poll.
+                self.next_tokens.pop(group, None)
+                if group == self.log_group_name:
+                    log.error(
+                        "Error fetching logs for API {0}. Please ensure logging "
+                        "is enabled for this API and the API is deployed. See "
+                        "http://docs.aws.amazon.com/apigateway/latest/"
+                        "developerguide/how-to-stage-settings.html: {1}"
+                            .format(self.api_id, e))
                 else:
-                    if 'nextToken' in kwargs:
-                        del kwargs['nextToken']
-                try:
-                    lambda_response = filter_log_events(**kwargs)
-                    events = lambda_response.get('events', [])
-                    for event in events:
-                        event['group_name'] = lambda_group
-                        allevents.append(event)
-                    update_next_token(lambda_response, kwargs)
-                except Exception as e:
+                    fxn = group[len("/aws/lambda/"):]
                     log.warning("Error fetching logs for Lambda function {0}"
                                 " with group {1}. This function may need to be"
-                                " invoked.".format(fxn, lambda_group, e))
-            return allevents
+                                " invoked.".format(fxn, group, e))
+                return
 
-        ## todo: remove shared kwargs
-        def list_apigateway_logs(allevents, kwargs):
-            # add events from API Gateway streams
-            kwargs['logGroupName'] = self.log_group_name
-            if self.log_group_name in self.next_tokens:
-                kwargs['nextToken'] = self.next_tokens[self.log_group_name]
+            if 'nextToken' in response:
+                self.next_tokens[group] = response['nextToken']
             else:
-                if 'nextToken' in kwargs:
-                    del kwargs['nextToken']
+                self.next_tokens.pop(group, None)
 
-            try:
-                apigresponse = filter_log_events(**kwargs)
-            except Exception as e:
-                log.error(
-                    "Error fetching logs for API {0}. Please ensure logging "
-                    "is enabled for this API and the API is deployed. See "
-                    "http://docs.aws.amazon.com/apigateway/latest/"
-                    "developerguide/how-to-stage-settings.html: {1}"
-                        .format(self.api_id, e))
-                raise
-
-            events = apigresponse.get('events', [])
-            for event in events:
-                event['group_name'] = self.log_group_name
+            for event in response.get('events', []):
+                event['group_name'] = group
                 allevents.append(event)
-            update_next_token(apigresponse, kwargs)
-            return allevents
-
-        def filter_log_events(**kwargs):
-            try:
-                resp = self.client.filter_log_events(**kwargs)
-
-                if 'nextToken' in resp:
-                    group = kwargs['logGroupName']
-                    next = resp['nextToken']
-                    #print "Resp: Group: " + group + " nextToken: " + next
-
-                #print resp
-
-                return resp
-            except Exception as e:
-                log.error("Caught error from CloudWatch: {0}".format(e))
-                raise
 
 
         def consumer():
@@ -282,37 +259,56 @@ class AWSLogs(object):
                 order to not exhaust the memory.
             """
             interleaving_sanity = deque(maxlen=self.MAX_EVENTS_PER_CALL)
-            kwargs = {'logGroupName': self.log_group_name,
-                      'interleaved': True}
+            base_kwargs = {'interleaved': True}
 
             if streams:
-                kwargs['logStreamNames'] = streams
+                base_kwargs['logStreamNames'] = streams
 
             if self.start:
-                kwargs['startTime'] = self.start
+                base_kwargs['startTime'] = self.start
 
             if self.end:
-                kwargs['endTime'] = self.end
+                base_kwargs['endTime'] = self.end
 
             if self.filter_pattern:
-                kwargs['filterPattern'] = self.filter_pattern
+                base_kwargs['filterPattern'] = self.filter_pattern
 
+            sent = False
             while not exit.is_set():
-                allevents = []
+                try:
+                    allevents = []
+                    groups = ([self.log_group_name]
+                              + self._get_lambda_log_groups())
 
-                list_apigateway_logs(allevents, kwargs)
-                list_lambda_logs(allevents, kwargs)
+                    for group in groups:
+                        fetch_group(group, base_kwargs, allevents)
 
-                sorted(allevents, key=itemgetter('timestamp'))
+                    # Global merge across every log group so interleaved
+                    # gateway/Lambda events come out in timestamp order
+                    # instead of one big block per group.
+                    allevents.sort(key=itemgetter('timestamp'))
 
-                for event in allevents:
-                    if event['eventId'] not in interleaving_sanity:
-                        interleaving_sanity.append(event['eventId'])
-                        queue.put(event)
+                    for event in allevents:
+                        identity = (event['group_name'], event['eventId'])
+                        if identity not in interleaving_sanity:
+                            interleaving_sanity.append(identity)
+                            queue.put(event)
 
-                # Send the exit signal if no more pages and not in watch mode
-                if not self.watch and not self.next_tokens:
-                    queue.put(None)
+                    if not self.next_tokens:
+                        if not self.watch:
+                            queue.put(None)
+                            sent = True
+                            break
+                        # Everything is caught up. Sleep once between full
+                        # polls instead of busy-looping; wait() keeps
+                        # Ctrl+C responsive.
+                        exit.wait(self.WATCH_SLEEP)
+                finally:
+                    # An unhandled error here used to kill this thread while
+                    # the main thread kept waiting for the exit signal, so
+                    # the process hung until Ctrl+C.
+                    if not self.watch and not sent:
+                        queue.put(None)
 
         g = Thread(target=generator)
         g.start()
