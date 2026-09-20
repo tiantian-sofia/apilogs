@@ -7,15 +7,20 @@ submitting.
 
 The only required procedure is as follows:
 
-1. Make sure, you have `tox` installed::
+1. Make sure ``pytest`` is installed::
 
-   $ pip install -U tox
+   $ pip install pytest
 
-2. Run all tests across all locally available python versions::
+2. Run the whole suite from the repository root::
 
-   $ tox
+   $ python -m pytest tests
 
 Make sure, all tests are passing.
+
+To run the tests with ``tox`` instead (see the notes further below)::
+
+   $ pip install -U tox
+   $ tox
 
 If it runs in at least one python version, you may ignore the `ERROR:
 pyXY: InterpreterNotFound: pythonX.Y` errors.
@@ -28,7 +33,7 @@ Concepts
 The testing infrastructure built on top of set of tools, explained in this
 section.
 
-`py.test` - test runner
+`pytest` - test runner
 -----------------------
 Test runner collects available tests, runs some or all of them, reports
 problems and even allows jumping into command line debugger if you need it.
@@ -39,20 +44,20 @@ There are multiple test runners available, here we use pytest_.
 
 `pytest` is mostly installed by running `tox` (see below), but can be installed by::
 
-    $ pip test pytest
+    $ pip install pytest
 
-After that, command `py.test` shall be available.
+After that, command `pytest` shall be available.
 
 Tests are placed in `tests` subdirectory or subdirectories.
 
 To run all tests in `tests` subdirectory, be a bit verbose and print possible
 output printed to stdout by your testing code::
 
-    $ py.test -sv tests
+    $ python -m pytest -sv tests
 
 To run all tests defined in `tests/test_it.py`::
 
-    $ py.test -sv tests/test_it.py
+    $ python -m pytest -sv tests/test_list_logs.py
 
 pytest_ allows running most tests written for `unittest`, `nose` and other testing frameworks.
 
@@ -193,27 +198,27 @@ or ask `tox` to recreate it::
 
     $ tox -e py27 -r
 
-Run all tests under one python version using `py.test`
+Run all tests under one python version using `pytest`
 ------------------------------------------------------
 
 First, create and activate virtualenv for your target python version (as described above).
 
 Then run all the tests::
 
-    $ py.test -sv tests
+    $ python -m pytest -sv tests
 
 See `pytest` help for more options (see e.g. `--pdb` which starts command line
 debugger in case some test fails).
 
 
-Run selected tests under one python version using `py.test`
+Run selected tests under one python version using `pytest`
 -----------------------------------------------------------
 
 First, create and activate virtualenv for your target python version (as described above).
 
 Then run the test of your interest::
 
-    $ py.test -sv tests/test_it.py
+    $ python -m pytest -sv tests/test_list_logs.py
 
 For more methods of selecting tests see: `Specifying tests / selecting tests`_
 
@@ -224,9 +229,9 @@ Check test coverage
 
 First, create and activate virtualenv for your target python version (as described above).
 
-To test coverage of complete package `awslogs`::
+To test coverage of complete package `apilogs`::
 
-    $ coverage run --source awslogs -m pytest tests/
+    $ python -m coverage run --source apilogs -m pytest tests/
 
 This creates or updates a file `.coverage`.
 
@@ -235,10 +240,10 @@ To show coverage report on console::
     $ coverage report
     Name                    Stmts   Miss  Cover
     -------------------------------------------
-    awslogs/__init__.py         2      0   100%
-    awslogs/bin.py             85      9    89%
-    awslogs/core.py           143     12    92%
-    awslogs/exceptions.py      12      2    83%
+    apilogs/__init__.py         2      0   100%
+    apilogs/bin.py             85      9    89%
+    apilogs/core.py           143     12    92%
+    apilogs/exceptions.py      12      2    83%
     -------------------------------------------
     TOTAL                     242     23    90%
 
